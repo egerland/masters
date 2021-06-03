@@ -1,11 +1,12 @@
 from vrepAPI import vrep
 import random
+import numpy as np
 
 
 class Robot():
     def __init__(self, vrep_addr='127.0.0.1', vrep_port=19997):
         vrep.simxFinish(-1)
-        self.default_opmode = vrep.simx_opmode_blocking
+        self.default_opmode = vrep.simx_opmode_oneshot_wait
         self.clientID = vrep.simxStart(vrep_addr, vrep_port, True, True, 5000, 5)
         if self.clientID == -1:
             raise ValueError("Connection failed!")
@@ -24,7 +25,7 @@ class Robot():
         self.weight_handle = self._get_object_handle('JuntaGiros_MT')
         self.body_handle = self._get_object_handle('RoboGiros')
         self.target_handle = self._get_object_handle('Target')
-        self.floor_handle = self._get_object_handle('Floor')
+        self.floor_handle = self._get_object_handle('FloorElement')
         self.get_robot_position()
         self.set_target([self.robot_position[0], self.robot_position[1], 0])
         self.started = False
@@ -110,6 +111,9 @@ class Robot():
         ]
         self.set_target(new_position)
 
+    def check_if_fallen(self):
+        return self._check_collision(self.floor_handle, self.body_handle)
+
     def step(self, action):
         if not self.started:
             self.started = True
@@ -123,12 +127,33 @@ class Robot():
         self.get_acc_data()
         self.get_gyro_data()
         self.get_robot_position()
+        done = False
+        x_diff = self.target_position[0] - self.robot_position[0]
+        y_diff = self.target_position[1] - self.robot_position[1]
+        reward = 1 - np.sqrt(x_diff ** 2 + y_diff ** 2)
+        self.state = [self.gyro[k] for k in ['x', 'y', 'z']]
+        self.state.extend([self.acc[k] for k in ['x', 'y', 'z']])
+        self.state.extend([x_diff, y_diff])
+        if self.check_if_fallen():
+            self.stop()
+            reward = -1
+            done = True
+        return np.array(self.state), reward, done, {}
 
     def stop(self):
         self.started = False
         vrep.simxStopSimulation(self.clientID, self.default_opmode)
+    
+    def reset(self):
+        self.stop()
+        self.wheel_vel = 0
+        self.weight_pos = 0
 
 
 if __name__ == '__main__':
     robot = Robot()
+    robot.stop()
+    done = False
+    while not done:
+        state, reward, done, info = robot.step([0, 0])
     print('done')
